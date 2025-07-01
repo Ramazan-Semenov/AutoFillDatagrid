@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -15,6 +17,8 @@ namespace WpfApp3
     /// </summary>
     public partial class MainWindow : Window
     {
+        private readonly UndoRedoStack _undoRedoStack = new UndoRedoStack();
+
         public MainWindow()
         {
             InitializeComponent();
@@ -29,214 +33,118 @@ namespace WpfApp3
                     Property3 = $"Value {i}-3"
                 });
             }
-
             dataGrid.ItemsSource = items;
+            InitializeCommands();
+        }
+        private void InitializeCommands()
+        {
+            // Команды копирования/вставки
+            CommandBinding copyCommand = new CommandBinding(ApplicationCommands.Copy, CopyCommandExecuted, CopyCommandCanExecute);
+            CommandBinding pasteCommand = new CommandBinding(ApplicationCommands.Paste, PasteCommandExecuted, PasteCommandCanExecute);
+            this.CommandBindings.Add(copyCommand);
+            this.CommandBindings.Add(pasteCommand);
+
+            // Команды Undo/Redo
+            CommandBinding undoCommand = new CommandBinding(ApplicationCommands.Undo, UndoCommandExecuted, UndoCommandCanExecute);
+            CommandBinding redoCommand = new CommandBinding(ApplicationCommands.Redo, RedoCommandExecuted, RedoCommandCanExecute);
+            this.CommandBindings.Add(undoCommand);
+            this.CommandBindings.Add(redoCommand);
         }
 
-        //private Point _dragStartPoint;
-        //private bool _isDragging;
-        //private DataGridCell _dragStartCell;
+        private void CopyCommandCanExecute(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = dataGrid.SelectedCells.Count > 0;
+        }
+        private void CopyCommandExecuted(object sender, ExecutedRoutedEventArgs e)
+        {
+            var selectedCells = dataGrid.SelectedCells;
+            if (selectedCells.Count == 0) return;
 
-        //private void DataGrid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-        //{
-        //    var cell = GetCellUnderMouse(e.GetPosition(dataGrid));
-        //    if (cell != null)
-        //    {
-        //        _dragStartPoint = e.GetPosition(dataGrid);
-        //        _dragStartCell = cell;
-        //        _isDragging = false;
-        //    }
-        //}
+            // Определяем границы выделенного диапазона
+            int minRow = int.MaxValue, maxRow = int.MinValue;
+            int minCol = int.MaxValue, maxCol = int.MinValue;
 
-        //private void DataGrid_PreviewMouseMove(object sender, MouseEventArgs e)
-        //{
-        //    if (e.LeftButton == MouseButtonState.Pressed && _dragStartCell != null)
-        //    {
-        //        var position = e.GetPosition(dataGrid);
-        //        if (Math.Abs(position.X - _dragStartPoint.X) > SystemParameters.MinimumHorizontalDragDistance ||
-        //            Math.Abs(position.Y - _dragStartPoint.Y) > SystemParameters.MinimumVerticalDragDistance)
-        //        {
-        //            _isDragging = true;
-        //        }
-        //    }
-        //}
+            foreach (var cell in selectedCells)
+            {
+                int row = dataGrid.Items.IndexOf(cell.Item);
+                int col = cell.Column.DisplayIndex;
 
-        //private void DataGrid_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-        //{
-        //    if (_isDragging && _dragStartCell != null)
-        //    {
-        //        var endCell = GetCellUnderMouse(e.GetPosition(dataGrid));
-        //        if (endCell != null && endCell != _dragStartCell)
-        //        {
-        //            AutoFillCells(_dragStartCell, endCell);
-        //        }
-        //    }
+                minRow = Math.Min(minRow, row);
+                maxRow = Math.Max(maxRow, row);
+                minCol = Math.Min(minCol, col);
+                maxCol = Math.Max(maxCol, col);
+            }
 
-        //    _isDragging = false;
-        //    _dragStartCell = null;
-        //}
+            // Собираем данные в формате, аналогичном Excel (табуляция между столбцами, новая строка между строками)
+            StringBuilder sb = new StringBuilder();
 
-        //private DataGridCell GetCellUnderMouse(Point position)
-        //{
-        //    var hitTest = VisualTreeHelper.HitTest(dataGrid, position);
-        //    if (hitTest == null) return null;
+            for (int row = minRow; row <= maxRow; row++)
+            {
+                for (int col = minCol; col <= maxCol; col++)
+                {
+                    if (col > minCol) sb.Append('\t');
 
-        //    var cell = hitTest.VisualHit;
-        //    while (cell != null && !(cell is DataGridCell))
-        //    {
-        //        cell = VisualTreeHelper.GetParent(cell);
-        //    }
+                    // Проверяем, есть ли ячейка в выделении
+                    var cellInfo = selectedCells.FirstOrDefault(c =>
+                        dataGrid.Items.IndexOf(c.Item) == row &&
+                        c.Column.DisplayIndex == col);
 
-        //    return cell as DataGridCell;
-        //}
+                    if (cellInfo != null)
+                    {
+                        var propertyInfo = cellInfo.Item.GetType().GetProperty(cellInfo.Column.SortMemberPath);
+                        if (propertyInfo != null)
+                        {
+                            var value = propertyInfo.GetValue(cellInfo.Item, null);
+                            sb.Append(value?.ToString() ?? "");
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
 
-        //private void AutoFillCells(DataGridCell startCell, DataGridCell endCell)
-        //{
-        //    int startRow = dataGrid.Items.IndexOf(startCell.DataContext);
-        //    int endRow = dataGrid.Items.IndexOf(endCell.DataContext);
-        //    int startCol = startCell.Column.DisplayIndex;
-        //    int endCol = endCell.Column.DisplayIndex;
+            Clipboard.SetText(sb.ToString());
+        }
+        private void PasteCommandCanExecute(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = Clipboard.ContainsText() && dataGrid.SelectedCells.Count > 0;
+        }
 
-        //    // Get the source value to copy
-        //    object sourceValue = GetCellValue(startCell);
+        private void PasteCommandExecuted(object sender, ExecutedRoutedEventArgs e)
+        {
+            if (!Clipboard.ContainsText()) return;
 
-        //    // Fill all cells in the range with the source value
-        //    if (startRow == endRow) // Fill horizontally
-        //    {
-        //        int minCol = Math.Min(startCol, endCol);
-        //        int maxCol = Math.Max(startCol, endCol);
+            string clipboardText = Clipboard.GetText();
+            var startCell = dataGrid.SelectedCells[0];
+            int startRow = dataGrid.Items.IndexOf(startCell.Item);
+            int startCol = startCell.Column.DisplayIndex;
 
-        //        for (int col = minCol; col <= maxCol; col++)
-        //        {
-        //            var cell = GetCell(startRow, col);
-        //            if (cell != null) SetCellValue(cell, sourceValue);
-        //        }
-        //    }
-        //    else if (startCol == endCol) // Fill vertically
-        //    {
-        //        int minRow = Math.Min(startRow, endRow);
-        //        int maxRow = Math.Max(startRow, endRow);
+            var pasteCommand = new PasteCommand(dataGrid, startRow, startCol, clipboardText);
+            _undoRedoStack.Execute(pasteCommand);
+        }
 
-        //        for (int row = minRow; row <= maxRow; row++)
-        //        {
-        //            var cell = GetCell(row, startCol);
-        //            if (cell != null) SetCellValue(cell, sourceValue);
-        //        }
-        //    }
-        //}
+        private void UndoCommandCanExecute(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = _undoRedoStack.CanUndo;
+        }
 
-        //private DataGridCell GetCell(int row, int col)
-        //{
-        //    if (row < 0 || row >= dataGrid.Items.Count) return null;
-        //    if (col < 0 || col >= dataGrid.Columns.Count) return null;
+        private void UndoCommandExecuted(object sender, ExecutedRoutedEventArgs e)
+        {
+            _undoRedoStack.Undo();
+        }
 
-        //    var rowContainer = dataGrid.ItemContainerGenerator.ContainerFromIndex(row) as DataGridRow;
-        //    if (rowContainer == null) return null;
+        private void RedoCommandCanExecute(object sender, CanExecuteRoutedEventArgs e)
+        {
+            e.CanExecute = _undoRedoStack.CanRedo;
+        }
 
-        //    var presenter = FindVisualChild<DataGridCellsPresenter>(rowContainer);
-        //    if (presenter == null) return null;
-
-        //    var cell = presenter.ItemContainerGenerator.ContainerFromIndex(col) as DataGridCell;
-        //    return cell;
-        //}
-
-        //private object GetCellValue(DataGridCell cell)
-        //{
-        //    if (cell.Content is TextBlock textBlock)
-        //    {
-        //        return textBlock.Text;
-        //    }
-        //    return cell.Content;
-        //}
-
-        //private void SetCellValue(DataGridCell cell, object value)
-        //{
-        //    var column = cell.Column as DataGridBoundColumn;
-        //    if (column != null)
-        //    {
-        //        var binding = column.Binding as Binding;
-        //        if (binding != null)
-        //        {
-        //            var propertyName = binding.Path.Path;
-        //            var item = cell.DataContext;
-        //            var property = item.GetType().GetProperty(propertyName);
-        //            if (property != null)
-        //            {
-        //                try
-        //                {
-        //                    property.SetValue(item, Convert.ChangeType(value, property.PropertyType), null);
-        //                }
-        //                catch
-        //                {
-        //                    // Handle conversion errors if needed
-        //                }
-        //            }
-        //        }
-        //    }
-        //}
-
-        //private static T FindVisualChild<T>(DependencyObject obj) where T : DependencyObject
-        //{
-        //    for (int i = 0; i < VisualTreeHelper.GetChildrenCount(obj); i++)
-        //    {
-        //        var child = VisualTreeHelper.GetChild(obj, i);
-        //        if (child != null && child is T)
-        //            return (T)child;
-        //        else
-        //        {
-        //            var childOfChild = FindVisualChild<T>(child);
-        //            if (childOfChild != null)
-        //                return childOfChild;
-        //        }
-        //    }
-        //    return null;
-        //}
+        private void RedoCommandExecuted(object sender, ExecutedRoutedEventArgs e)
+        {
+            _undoRedoStack.Redo();
+        }
         private DataGridCell _autoFillStartCell;
 
-        private void AutoFillThumb_DragDelta(object sender, DragDeltaEventArgs e)
-        {
-            var thumb = sender as Thumb;
-            if (thumb == null) return;
 
-            // Get the parent cell of the thumb
-            var startCell = FindParent<DataGridCell>(thumb);
-            if (startCell == null) return;
 
-            // Store the starting cell if this is the first drag event
-            if (_autoFillStartCell == null)
-            {
-                _autoFillStartCell = startCell;
-            }
-
-            // Get the cell under the current mouse position
-            var mousePos = Mouse.GetPosition(dataGrid);
-            var endCell = GetCellUnderMouse(mousePos);
-            if (endCell == null) return;
-
-            // Highlight the potential fill range (visual feedback)
-            ClearTempSelection();
-            HighlightFillRange(_autoFillStartCell, endCell);
-        }
-
-        private void AutoFillThumb_DragCompleted(object sender, DragCompletedEventArgs e)
-        {
-            var thumb = sender as Thumb;
-            if (thumb == null || _autoFillStartCell == null) return;
-
-            // Get the ending cell
-            var mousePos = Mouse.GetPosition(dataGrid);
-            var endCell = GetCellUnderMouse(mousePos);
-
-            if (endCell != null)
-            {
-                // Perform the autofill
-                ExecuteAutoFill(_autoFillStartCell, endCell);
-            }
-
-            // Clean up
-            ClearTempSelection();
-            _autoFillStartCell = null;
-        }
 
         private void ExecuteAutoFill(DataGridCell startCell, DataGridCell endCell)
         {
@@ -419,7 +327,6 @@ namespace WpfApp3
         }
 
         #endregion
-        //  private DataGridCell _autoFillStartCell;
         private Thumb _currentThumb;
 
         private void DataGridCell_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -509,8 +416,6 @@ namespace WpfApp3
             }
         }
 
-        // Остальные методы (ExecuteAutoFill, HighlightFillRange, ClearTempSelection, и helper methods) 
-        // остаются такими же, как в предыдущем примере
     }
 
     public class DataItem : INotifyPropertyChanged
@@ -526,7 +431,182 @@ namespace WpfApp3
         public event PropertyChangedEventHandler PropertyChanged;
     }
 
+    public abstract class Command
+    {
+        public abstract void Execute();
+        public abstract void UnExecute();
+    }
 
+    public class UndoRedoStack
+    {
+        private readonly Stack<Command> _undoStack = new Stack<Command>();
+        private readonly Stack<Command> _redoStack = new Stack<Command>();
 
+        public void Execute(Command command)
+        {
+            command.Execute();
+            _undoStack.Push(command);
+            _redoStack.Clear();
+        }
 
+        public void Undo()
+        {
+            if (_undoStack.Count > 0)
+            {
+                var command = _undoStack.Pop();
+                command.UnExecute();
+                _redoStack.Push(command);
+            }
+        }
+
+        public void Redo()
+        {
+            if (_redoStack.Count > 0)
+            {
+                var command = _redoStack.Pop();
+                command.Execute();
+                _undoStack.Push(command);
+            }
+        }
+
+        public bool CanUndo => _undoStack.Count > 0;
+        public bool CanRedo => _redoStack.Count > 0;
+    }
+
+    public class PasteCommand : Command
+    {
+        private readonly DataGrid _dataGrid;
+        private readonly int _startRow;
+        private readonly int _startCol;
+        private readonly string _clipboardText;
+        private List<CellChange> _changes = new List<CellChange>();
+
+        public PasteCommand(DataGrid dataGrid, int startRow, int startCol, string clipboardText)
+        {
+            _dataGrid = dataGrid;
+            _startRow = startRow;
+            _startCol = startCol;
+            _clipboardText = clipboardText;
+        }
+
+        public override void Execute()
+        {
+            if (_changes.Count == 0) // Первое выполнение
+            {
+                PerformPaste();
+            }
+            else // Повторное выполнение (Redo)
+            {
+                ApplyChanges();
+            }
+        }
+
+        public override void UnExecute()
+        {
+            RevertChanges();
+        }
+
+        private void PerformPaste()
+        {
+            string[] rows = _clipboardText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+
+            for (int r = 0; r < rows.Length; r++)
+            {
+                if (string.IsNullOrEmpty(rows[r])) continue;
+
+                string[] cells = rows[r].Split('\t');
+                for (int c = 0; c < cells.Length; c++)
+                {
+                    int targetRow = _startRow + r;
+                    int targetCol = _startCol + c;
+
+                    if (targetRow >= _dataGrid.Items.Count || targetCol >= _dataGrid.Columns.Count)
+                        continue;
+
+                    var item = _dataGrid.Items[targetRow];
+                    var column = _dataGrid.Columns[targetCol] as DataGridBoundColumn;
+
+                    if (column != null)
+                    {
+                        var binding = column.Binding as Binding;
+                        if (binding != null)
+                        {
+                            string propertyName = binding.Path.Path;
+                            var propertyInfo = item.GetType().GetProperty(propertyName);
+
+                            if (propertyInfo != null && propertyInfo.CanWrite)
+                            {
+                                // Сохраняем старое значение
+                                object oldValue = propertyInfo.GetValue(item, null);
+
+                                try
+                                {
+                                    object newValue = Convert.ChangeType(cells[c], propertyInfo.PropertyType);
+                                    _changes.Add(new CellChange
+                                    {
+                                        Row = targetRow,
+                                        Column = targetCol,
+                                        PropertyName = propertyName,
+                                        OldValue = oldValue,
+                                        NewValue = newValue
+                                    });
+
+                                    propertyInfo.SetValue(item, newValue, null);
+                                }
+                                catch
+                                {
+                                    // Ошибка преобразования - пропускаем ячейку
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            _dataGrid.Items.Refresh();
+        }
+
+        private void ApplyChanges()
+        {
+            foreach (var change in _changes)
+            {
+                if (change.Row >= _dataGrid.Items.Count) continue;
+
+                var item = _dataGrid.Items[change.Row];
+                var propertyInfo = item.GetType().GetProperty(change.PropertyName);
+
+                if (propertyInfo != null && propertyInfo.CanWrite)
+                {
+                    propertyInfo.SetValue(item, change.NewValue, null);
+                }
+            }
+            _dataGrid.Items.Refresh();
+        }
+
+        private void RevertChanges()
+        {
+            foreach (var change in _changes)
+            {
+                if (change.Row >= _dataGrid.Items.Count) continue;
+
+                var item = _dataGrid.Items[change.Row];
+                var propertyInfo = item.GetType().GetProperty(change.PropertyName);
+
+                if (propertyInfo != null && propertyInfo.CanWrite)
+                {
+                    propertyInfo.SetValue(item, change.OldValue, null);
+                }
+            }
+            _dataGrid.Items.Refresh();
+        }
+
+        private class CellChange
+        {
+            public int Row { get; set; }
+            public int Column { get; set; }
+            public string PropertyName { get; set; }
+            public object OldValue { get; set; }
+            public object NewValue { get; set; }
+        }
+    }
 }

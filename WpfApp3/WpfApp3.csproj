@@ -55,6 +55,9 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Undo_Redo\CellEditCommand.cs" />
+    <Compile Include="Undo_Redo\DataGridRedoUndo.cs" />
+    <Compile Include="Undo_Redo\UndoRedoStack.cs" />
     <Page Include="MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
@@ -65,6 +68,7 @@
     </Compile>
     <Compile Include="c.cs" />
     <Compile Include="DataGridRangeSelectionBehavior.cs" />
+    <Compile Include="dfv.cs" />
     <Compile Include="fg.cs" />
     <Compile Include="MainWindow.xaml.cs">
       <DependentUpon>MainWindow.xaml</DependentUpon>
